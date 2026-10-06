@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  tests:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        run: pytest -v
+
+  sast:
+    name: SAST (Bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Bandit
+        run: pip install bandit==1.9.4
+
+      - name: Generate reports
+        run: |
+          mkdir -p reports
+          bandit -r app run.py -f html -o reports/bandit-report.html --exit-zero
+          bandit -r app run.py -f json -o reports/bandit-report.json --exit-zero
+          bandit -r app run.py -f txt -o reports/bandit-report.txt --exit-zero
+
+      - name: Add report to job summary
+        run: |
+          {
+            echo "## Bandit (SAST)"
+            echo '```'
+            cat reports/bandit-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: bandit-report
+          path: reports/
+
+      - name: Fail on findings
+        run: bandit -r app run.py
+
+  sca-pip-audit:
+    name: SCA (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+
+      - name: Generate reports
+        run: |
+          mkdir -p reports
+          pip-audit -r requirements.txt --desc -f json -o reports/pip-audit.json || true
+          pip-audit -r requirements.txt --desc -f markdown -o reports/pip-audit.md || true
+
+      - name: Add report to job summary
+        run: |
+          {
+            echo "## pip-audit (SCA)"
+            if [ -s reports/pip-audit.md ]; then cat reports/pip-audit.md; else echo "No known vulnerabilities found"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: pip-audit-report
+          path: reports/
+
+      - name: Fail on vulnerabilities
+        run: pip-audit -r requirements.txt --desc
+
+  sca-dependency-check:
+    name: SCA (OWASP Dependency-Check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Restore NVD database cache
+        uses: actions/cache@v4
+        with:
+          path: dc-data
+          key: dependency-check-data-${{ github.run_id }}
+          restore-keys: dependency-check-data-
+
+      - name: Run Dependency-Check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          mkdir -p reports dc-data
+          docker run --rm \
+            -u "$(id -u):$(id -g)" \
+            -v "$PWD":/src \
+            -v "$PWD/dc-data":/usr/share/dependency-check/data \
+            -v "$PWD/reports":/report \
+            owasp/dependency-check:latest \
+            --project secure-rest-api \
+            --scan /src/requirements.txt \
+            --enableExperimental \
+            --disableOssIndex \
+            --format HTML --format JSON \
+            --out /report \
+            --failOnCVSS 7 \
+            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"}
+
+      - name: Add report to job summary
+        if: always()
+        run: python3 .github/scripts/dependency_check_summary.py reports/dependency-check-report.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: dependency-check-report
+          path: reports/
