@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/semchik200001/secure-rest-api/actions/workflows/ci.yml/badge.svg)](https://github.com/semchik200001/secure-rest-api/actions/workflows/ci.yml)
 
-Учебный проект по дисциплине «Системы компьютерной обработки изображений», работа 1.
+Учебный проект по дисциплине «Информационная безопасность», работа 1.
 
 Небольшое REST API на Python и Flask: регистрация и вход пользователей, выдача JWT-токена, просмотр и создание постов. В проекте реализована защита от SQL-инъекций, XSS и Broken Authentication. При каждом push и pull request GitHub Actions автоматически запускает тесты, статический анализ кода (SAST) и проверку зависимостей (SCA).
 
