@@ -14,11 +14,11 @@ env:
 jobs:
   tests:
     name: Tests (pytest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -31,11 +31,11 @@ jobs:
 
   sast:
     name: SAST (Bandit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -60,7 +60,7 @@ jobs:
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: bandit-report
           path: reports/
@@ -70,11 +70,11 @@ jobs:
 
   sca-pip-audit:
     name: SCA (pip-audit)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -96,7 +96,7 @@ jobs:
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit-report
           path: reports/
@@ -106,13 +106,13 @@ jobs:
 
   sca-dependency-check:
     name: SCA (OWASP Dependency-Check)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Restore NVD database cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: dc-data
           key: dependency-check-data-${{ github.run_id }}
@@ -121,14 +121,21 @@ jobs:
       - name: Run Dependency-Check
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        # С ключом NVD база обновляется через API, без ключа скачивается
+        # из официальных JSON-фидов NVD.
         run: |
           mkdir -p reports dc-data
+          if [ -n "$NVD_API_KEY" ]; then
+            NVD_SOURCE=(--nvdApiKey "$NVD_API_KEY")
+          else
+            NVD_SOURCE=(--nvdDatafeed "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{0}.json.gz")
+          fi
           docker run --rm \
             -u "$(id -u):$(id -g)" \
             -v "$PWD":/src \
             -v "$PWD/dc-data":/usr/share/dependency-check/data \
             -v "$PWD/reports":/report \
-            owasp/dependency-check:latest \
+            owasp/dependency-check:13.0.0 \
             --project secure-rest-api \
             --scan /src/requirements.txt \
             --enableExperimental \
@@ -136,7 +143,7 @@ jobs:
             --format HTML --format JSON \
             --out /report \
             --failOnCVSS 7 \
-            ${NVD_API_KEY:+--nvdApiKey "$NVD_API_KEY"}
+            "${NVD_SOURCE[@]}"
 
       - name: Add report to job summary
         if: always()
@@ -144,7 +151,7 @@ jobs:
 
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-check-report
           path: reports/
