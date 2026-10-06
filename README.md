@@ -1,5 +1,7 @@
 # Secure REST API
 
+[![CI](https://github.com/semchik200001/secure-rest-api/actions/workflows/ci.yml/badge.svg)](https://github.com/semchik200001/secure-rest-api/actions/workflows/ci.yml)
+
 Учебный проект по дисциплине «Информационная безопасность», работа 1.
 
 Небольшое REST API на Python и Flask: регистрация и вход пользователей, выдача JWT-токена, просмотр и создание постов. В проекте реализована защита от SQL-инъекций, XSS и Broken Authentication. При каждом push и pull request GitHub Actions автоматически запускает тесты, статический анализ кода (SAST) и проверку зависимостей (SCA).
@@ -26,8 +28,9 @@ secure-rest-api/
 |   `-- test_api.py      # тесты API и мер защиты
 |-- .github/
 |   |-- workflows/ci.yml # pipeline GitHub Actions
-|   `-- scripts/         # вспомогательный скрипт для отчёта Dependency-Check
+|   `-- scripts/         # загрузка фидов NVD и отчёт Dependency-Check для summary
 |-- docs/screenshots/    # скриншоты отчётов
+|-- dependency-check-suppressions.xml  # подавление ложных срабатываний Dependency-Check
 |-- run.py               # точка входа
 |-- requirements.txt     # зависимости приложения
 `-- requirements-dev.txt # зависимости для разработки и проверок
@@ -88,14 +91,14 @@ pytest -v
 Успешный ответ (200):
 
 ```json
-{"access_token": "eyJhbGciOi...", "token_type": "Bearer", "expires_in": 1800}
+{"access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJhbGljZSIsImlhdCI6MTc5MTI3MDY5MywiZXhwIjoxNzkxMjcyNDkzfQ.47piF2sYhQExrII6KX3z5Yft8lmSch8bmcMMdqOzGow", "token_type": "Bearer", "expires_in": 1800}
 ```
 
 При неверном логине или пароле возвращается 401 с одним и тем же сообщением `Неверный логин или пароль`.
 
 ### GET /api/data
 
-Заголовок: `Authorization: Bearer <token>`.
+Нужен заголовок `Authorization`, в котором после слова `Bearer` и пробела идёт токен из ответа `/auth/login`.
 
 Ответ (200):
 
@@ -112,7 +115,7 @@ pytest -v
 
 ### POST /api/posts
 
-Заголовок: `Authorization: Bearer <token>`. Тело запроса:
+Нужен такой же заголовок `Authorization` с токеном, как у `GET /api/data`. Тело запроса:
 
 ```json
 {"title": "Первый пост", "body": "Привет!"}
@@ -183,13 +186,13 @@ def serialize_post(row):
 
 **Middleware проверки токена.** Функция `jwt_required` в `app/auth.py` подключена к блюпринту `/api` через `before_request`. Она выполняется до любого обработчика внутри `/api`, поэтому новый защищённый эндпоинт невозможно случайно оставить открытым. Middleware:
 
-1. берёт токен из заголовка `Authorization: Bearer <token>`;
+1. берёт токен из заголовка `Authorization` (формат: слово `Bearer`, пробел, токен);
 2. проверяет подпись и срок действия, причём список допустимых алгоритмов задан явно (`algorithms=["HS256"]`), так что токены с `alg: none` или с другим алгоритмом отклоняются;
 3. требует наличия полей `sub`, `iat`, `exp`;
 4. проверяет, что пользователь из токена существует в базе;
 5. при любой ошибке возвращает 401, иначе сохраняет пользователя в `g.user`.
 
-**Защита от перебора логинов.** На неверный логин и на неверный пароль сервер отвечает одинаково. Если пользователя нет, пароль всё равно проверяется bcrypt против хэша-заглушки, чтобы по времени ответа нельзя было понять, существует ли такой логин.
+**Защита от перебора логинов.** На неверный логин и на неверный пароль сервер отвечает одинаково. Если пользователя нет, пароль всё равно проверяется bcrypt против заранее посчитанного фиктивного хэша, чтобы по времени ответа нельзя было понять, существует ли такой логин.
 
 ### Прочие меры
 
@@ -207,15 +210,73 @@ def serialize_post(row):
 | Tests (pytest) | pytest | запускает 18 тестов API и мер защиты |
 | SAST (Bandit) | Bandit 1.9.4 | статический анализ кода в `app/` и `run.py`, падает при любой находке |
 | SCA (pip-audit) | pip-audit 2.10.1 | проверка зависимостей по базе PyPI Advisory и OSV |
-| SCA (OWASP Dependency-Check) | Dependency-Check | проверка зависимостей по базе NVD, падает при уязвимости с CVSS 7 и выше |
+| SCA (OWASP Dependency-Check) | Dependency-Check 13.0.0 | проверка зависимостей по базе NVD, падает при уязвимости с CVSS 7 и выше |
 
-Каждый сканер сохраняет отчёт как артефакт запуска (HTML, JSON, текст или markdown) и выводит краткий результат на странице запуска в разделе Summary.
+Каждый сканер сохраняет отчёт как артефакт запуска (HTML, JSON или текст) и выводит краткий результат на странице запуска в разделе Summary.
 
-Последний успешный запуск: _ссылка будет добавлена_
+### Как работает OWASP Dependency-Check
+
+Dependency-Check запускается из официального Docker-образа `owasp/dependency-check:13.0.0` и сверяет зависимости из `requirements.txt` с базой уязвимостей NVD. Свежие версии сканера без API-ключа NVD не могут скачать базу через API, поэтому pipeline берёт её из официальных публичных JSON-фидов NVD:
+
+1. Скрипт [.github/scripts/download_nvd_feeds.sh](.github/scripts/download_nvd_feeds.sh) по одному скачивает фиды `nvdcve-2.0-<год>.json.gz` и `nvdcve-2.0-modified.json.gz` с повторами при ошибках. Если запрашивать их параллельно, сервер NVD часто отвечает ошибкой 404.
+2. Скачанные фиды кэшируются между запусками. В следующих запусках заново качаются только те файлы, у которых в `.meta` изменилась контрольная сумма.
+3. Фиды раздаются локальным HTTP-сервером, и Dependency-Check получает их через параметр `--nvdDatafeed`.
+
+Порог `--failOnCVSS 7` означает, что pipeline падает, если найдена уязвимость с оценкой CVSS 7.0 и выше.
+
+### Разбор найденной уязвимости
+
+При первом запуске Dependency-Check остановил pipeline на уязвимости **CVE-2025-45770** (CVSS 7.0, HIGH) в пакете PyJWT 2.15.1. Разбор показал, что это ложное срабатывание:
+
+- в описании CVE речь идёт о библиотеке «jwt v5.4.3», ссылки ведут на PHP-библиотеку [lcobucci/jwt](https://github.com/lcobucci/jwt);
+- в NVD уязвимость привязана к CPE `cpe:2.3:a:jwt_project:jwt` для версий до 5.4.3 включительно;
+- Dependency-Check сопоставил PyJWT с этим CPE по слову «jwt» с уверенностью **Low**, хотя PyJWT это другой проект (CPE `pyjwt_project:pyjwt`), а установленная версия 2.15.1;
+- сама CVE в NVD помечена как оспоренная (disputed).
+
+Порог проверки я не снижал. Вместо этого добавил файл [dependency-check-suppressions.xml](dependency-check-suppressions.xml), который отвязывает от PyJWT только чужой CPE `jwt_project:jwt`. Уязвимости, привязанные к настоящему CPE PyJWT, по-прежнему будут найдены, и pipeline упадёт. После этого Dependency-Check показывает 0 уязвимостей и 1 подавленное ложное срабатывание.
+
+Ещё одно исправление по результатам SAST: Bandit выдал предупреждение B106 (hardcoded password) на строку `token_type="Bearer"`. Это тоже ложное срабатывание, но вместо комментария `# nosec` строка вынесена в константу `AUTH_SCHEME`, которая теперь используется и при выдаче токена, и в middleware.
+
+### Ссылки на запуски
+
+- Все запуски: https://github.com/semchik200001/secure-rest-api/actions
+- Успешные запуски в ветке main: https://github.com/semchik200001/secure-rest-api/actions/workflows/ci.yml?query=branch%3Amain+is%3Asuccess
 
 ## Результаты проверок
 
-_Скриншоты будут добавлены после первого запуска pipeline._
+Скриншоты сделаны по запуску [#5](https://github.com/semchik200001/secure-rest-api/actions/runs/37434536022). Логи шагов выгружены из GitHub Actions командой `gh run view --log`, HTML-отчёт Dependency-Check взят из артефактов этого запуска.
+
+### Запуск pipeline в GitHub Actions
+
+Все четыре джоба завершились успешно, отчёты сохранены как артефакты.
+
+![Запуск pipeline](docs/screenshots/01-pipeline.png)
+
+### SAST: Bandit
+
+Проверено 250 строк кода, проблем не найдено.
+
+![Отчёт Bandit](docs/screenshots/02-bandit.png)
+
+### SCA: pip-audit
+
+Известных уязвимостей в зависимостях нет (проверены все 9 пакетов, включая транзитивные).
+
+![Отчёт pip-audit](docs/screenshots/03-pip-audit.png)
+
+### SCA: OWASP Dependency-Check
+
+Лог сканирования:
+
+![Лог Dependency-Check](docs/screenshots/04-dependency-check-log.png)
+
+HTML-отчёт: просканировано 5 зависимостей, уязвимых 0, найдено 0, подавлено 1 ложное срабатывание.
+
+![Отчёт Dependency-Check](docs/screenshots/05-dependency-check-report.png)
+
+### Тесты
+
+![Результат pytest](docs/screenshots/06-pytest.png)
 
 ## Тестирование
 
@@ -252,6 +313,12 @@ $ curl -s -X POST http://127.0.0.1:8000/auth/login -H 'Content-Type: application
 ```
 $ curl -s -X POST http://127.0.0.1:8000/auth/login -H 'Content-Type: application/json' -d '{"username": "alice", "password": "Str0ng-Passw0rd"}'
 {"access_token":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwidXNlcm5hbWUiOiJhbGljZSIsImlhdCI6MTc5MTI3MDY5MywiZXhwIjoxNzkxMjcyNDkzfQ.47piF2sYhQExrII6KX3z5Yft8lmSch8bmcMMdqOzGow","expires_in":1800,"token_type":"Bearer"}
+```
+
+Токен из ответа на вход сохраняется в переменную `TOKEN`, она используется в запросах ниже:
+
+```
+$ TOKEN=$(curl -s -X POST http://127.0.0.1:8000/auth/login -H 'Content-Type: application/json' -d '{"username": "alice", "password": "Str0ng-Passw0rd"}' | python3 -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
 ```
 
 Запрос данных без токена:
