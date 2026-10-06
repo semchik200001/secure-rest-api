@@ -134,6 +134,7 @@ jobs:
             owasp/dependency-check:13.0.0 \
             --project secure-rest-api \
             --scan /src/requirements.txt \
+            --suppression /src/dependency-check-suppressions.xml \
             --enableExperimental \
             --disableOssIndex \
             --nvdDatafeed "http://127.0.0.1:8080/nvdcve-2.0-{0}.json.gz" \

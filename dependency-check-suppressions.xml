@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.3.xsd">
+  <suppress>
+    <notes><![CDATA[
+      Ложное срабатывание. Dependency-Check с уверенностью LOW сопоставляет PyJWT
+      с CPE jwt_project:jwt, который относится к PHP-библиотеке lcobucci/jwt
+      (например, CVE-2025-45770, затронуты версии до 5.4.3). Подавляется только
+      этот CPE, уязвимости по CPE pyjwt_project:pyjwt продолжают проверяться.
+    ]]></notes>
+    <packageUrl regex="true">^pkg:pypi/pyjwt@.*$</packageUrl>
+    <cpe>cpe:/a:jwt_project:jwt</cpe>
+  </suppress>
+</suppressions>

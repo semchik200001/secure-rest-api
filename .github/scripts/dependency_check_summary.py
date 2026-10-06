@@ -4,6 +4,10 @@ import json
 import sys
 
 
+def vuln_ids(vulns):
+    return ", ".join(v.get("name", "?") for v in vulns) or "none"
+
+
 def main(path):
     print("## OWASP Dependency-Check (SCA)")
     try:
@@ -16,21 +20,20 @@ def main(path):
     info = report.get("scanInfo", {})
     print(f"Engine version: {info.get('engineVersion', '-')}")
     print()
-    print("| Dependency | Version | Vulnerabilities |")
+    print("| Dependency | Vulnerabilities | Suppressed (false positives) |")
     print("|---|---|---|")
 
     total = 0
+    suppressed = 0
     for dep in report.get("dependencies", []):
-        name = dep.get("fileName", "-")
-        packages = dep.get("packages") or [{}]
-        version = packages[0].get("id", "-").rsplit("@", 1)[-1]
         vulns = dep.get("vulnerabilities", [])
+        hidden = dep.get("suppressedVulnerabilities", [])
         total += len(vulns)
-        ids = ", ".join(v.get("name", "?") for v in vulns) or "none"
-        print(f"| {name} | {version} | {ids} |")
+        suppressed += len(hidden)
+        print(f"| {dep.get('fileName', '-')} | {vuln_ids(vulns)} | {vuln_ids(hidden)} |")
 
     print()
-    print(f"Total vulnerabilities: **{total}**")
+    print(f"Total vulnerabilities: **{total}**, suppressed: {suppressed}")
 
 
 if __name__ == "__main__":
