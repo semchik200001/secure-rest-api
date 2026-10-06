@@ -111,15 +111,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Restore NVD database cache
-        uses: actions/cache@v6
+      - name: Restore NVD feeds cache
+        uses: actions/cache/restore@v6
         with:
-          path: dc-data
-          key: dependency-check-data-${{ github.run_id }}
-          restore-keys: dependency-check-data-
+          path: nvd-mirror
+          key: nvd-feeds-${{ github.run_id }}
+          restore-keys: nvd-feeds-
 
-      - name: Download NVD data feeds
+      - name: Update NVD feeds
         run: bash .github/scripts/download_nvd_feeds.sh nvd-mirror
+
+      - name: Save NVD feeds cache
+        uses: actions/cache/save@v6
+        with:
+          path: nvd-mirror
+          key: nvd-feeds-${{ github.run_id }}
 
       - name: Run Dependency-Check
         run: |
