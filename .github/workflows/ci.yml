@@ -118,19 +118,15 @@ jobs:
           key: dependency-check-data-${{ github.run_id }}
           restore-keys: dependency-check-data-
 
+      - name: Download NVD data feeds
+        run: bash .github/scripts/download_nvd_feeds.sh nvd-mirror
+
       - name: Run Dependency-Check
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        # С ключом NVD база обновляется через API, без ключа скачивается
-        # из официальных JSON-фидов NVD.
         run: |
           mkdir -p reports dc-data
-          if [ -n "$NVD_API_KEY" ]; then
-            NVD_SOURCE=(--nvdApiKey "$NVD_API_KEY")
-          else
-            NVD_SOURCE=(--nvdDatafeed "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-{0}.json.gz")
-          fi
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory nvd-mirror > /dev/null 2>&1 &
           docker run --rm \
+            --network host \
             -u "$(id -u):$(id -g)" \
             -v "$PWD":/src \
             -v "$PWD/dc-data":/usr/share/dependency-check/data \
@@ -140,10 +136,10 @@ jobs:
             --scan /src/requirements.txt \
             --enableExperimental \
             --disableOssIndex \
+            --nvdDatafeed "http://127.0.0.1:8080/nvdcve-2.0-{0}.json.gz" \
             --format HTML --format JSON \
             --out /report \
-            --failOnCVSS 7 \
-            "${NVD_SOURCE[@]}"
+            --failOnCVSS 7
 
       - name: Add report to job summary
         if: always()
